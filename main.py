@@ -23,14 +23,15 @@ app = FastAPI(title="Venue Scraper Worker", version="2.0.0")
 # Check if Celery is enabled (optional for cost efficiency)
 ENABLE_CELERY = os.getenv('ENABLE_CELERY', 'false').lower() == 'true'
 
-# Import task function - circular import is broken since worker.py no longer imports tasks
-# Note: scrape_venue_task can be called directly even if it's a Celery task
+# Import task functions - circular import is broken since worker.py no longer imports tasks
+# Import both the Celery-wrapped version and the direct implementation
 try:
-    from tasks import scrape_venue_task
+    from tasks import scrape_venue_task, _scrape_venue_task_impl
 except Exception as e:
     # If import fails (e.g., Celery/Redis not available), we can't process tasks
     logger.error(f"Failed to import tasks module: {e}")
     scrape_venue_task = None
+    _scrape_venue_task_impl = None
     ENABLE_CELERY = False
 
 # Import Celery app only if enabled (for .delay() method)
@@ -125,8 +126,8 @@ async def scrape_venue(request: ScrapeVenueRequest):
     try:
         logger.info(f"Received scrape-venue request for task_id: {task_id}")
         
-        if scrape_venue_task is None:
-            logger.error("scrape_venue_task is None - tasks module not loaded properly")
+        if _scrape_venue_task_impl is None:
+            logger.error("_scrape_venue_task_impl is None - tasks module not loaded properly")
             raise HTTPException(status_code=503, detail="Scraping service unavailable - tasks module not loaded")
         
         # Validate task exists in database
@@ -153,10 +154,9 @@ async def scrape_venue(request: ScrapeVenueRequest):
         else:
             # Run directly in background thread - simpler and more cost-effective for low traffic
             # This avoids blocking the HTTP response while processing
-            # Note: Even though scrape_venue_task is a Celery task, we can call it directly
-            # This path requires no Redis/Celery infrastructure, reducing costs
+            # Call the implementation function directly (not the Celery wrapper)
             import threading
-            thread = threading.Thread(target=scrape_venue_task, args=(task_id,))
+            thread = threading.Thread(target=_scrape_venue_task_impl, args=(task_id,))
             thread.daemon = True
             thread.start()
             logger.info(f"Started scraping task {task_id} directly (Celery disabled)")

@@ -17,13 +17,10 @@ logger = logging.getLogger(__name__)
 from worker import celery_app
 
 
-@celery_app.task(name='scrape_venue_task')
-def scrape_venue_task(task_id: str):
+def _scrape_venue_task_impl(task_id: str):
     """
-    Scrape a venue URL and extract structured data.
-    
-    This function can be called directly (when Celery disabled) or via Celery (.delay()).
-    No changes needed - works in both modes for maximum flexibility.
+    Core implementation of venue scraping task.
+    This is the actual work - can be called directly or via Celery wrapper.
     
     Args:
         task_id: The ID of the scraping task
@@ -99,6 +96,19 @@ def scrape_venue_task(task_id: str):
     except Exception as e:
         logger.error(f"Error processing task {task_id}: {str(e)}")
         update_task_status(task_id, 'failed', error_message=str(e))
+
+
+@celery_app.task(name='scrape_venue_task')
+def scrape_venue_task(task_id: str):
+    """
+    Celery task wrapper for venue scraping.
+    
+    This is the Celery-decorated version that gets called when using .delay()
+    It simply calls the implementation function.
+    
+    When Celery is disabled, call _scrape_venue_task_impl() directly instead.
+    """
+    return _scrape_venue_task_impl(task_id)
 
 
 @celery_app.task(name='process_pending_tasks')
