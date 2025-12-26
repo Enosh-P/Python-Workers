@@ -1,5 +1,11 @@
 """
-Celery worker configuration and startup.
+Celery worker configuration (optional).
+
+Celery is now optional - jobs are triggered via HTTP POST instead of Celery Beat polling.
+This reduces infrastructure costs since the worker only runs when jobs are submitted.
+
+Set ENABLE_CELERY=true to use Celery for concurrent task processing.
+If disabled, tasks run directly in FastAPI (suitable for low traffic <5 users).
 """
 
 from celery import Celery
@@ -9,6 +15,7 @@ import os
 celery_app = Celery('venue_scraper')
 
 # Configure Celery from environment variables
+# Note: Beat schedule removed - jobs are now triggered via HTTP POST to FastAPI
 celery_app.conf.update(
     broker_url=os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0'),
     result_backend=os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0'),
@@ -22,16 +29,13 @@ celery_app.conf.update(
     task_soft_time_limit=240,  # 4 minutes soft limit
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=50,  # Restart worker after 50 tasks to prevent memory leaks
-    beat_schedule={
-        'process-pending-venue-tasks': {
-            'task': 'process_pending_tasks',
-            'schedule': 10.0,  # Every 10 seconds
-        },
-    },
+    worker_concurrency=1,  # Low concurrency for cost efficiency (1-2 jobs at a time)
+    # Beat schedule removed - replaced by HTTP-triggered execution
+    # Jobs are triggered immediately when user submits URL via FastAPI endpoint
 )
 
 # Import tasks to register them
-from tasks import scrape_venue_task, process_pending_tasks
+from tasks import scrape_venue_task
 
 if __name__ == '__main__':
     celery_app.start()

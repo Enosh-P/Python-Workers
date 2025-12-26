@@ -18,7 +18,10 @@ from worker import celery_app
 @celery_app.task(name='scrape_venue_task')
 def scrape_venue_task(task_id: str):
     """
-    Celery task to scrape a venue URL and extract structured data.
+    Scrape a venue URL and extract structured data.
+    
+    This function can be called directly (when Celery disabled) or via Celery (.delay()).
+    No changes needed - works in both modes for maximum flexibility.
     
     Args:
         task_id: The ID of the scraping task
@@ -99,28 +102,17 @@ def scrape_venue_task(task_id: str):
 @celery_app.task(name='process_pending_tasks')
 def process_pending_tasks():
     """
-    Periodic task to check for pending scraping tasks and process them.
-    This should be called by Celery Beat on a schedule (e.g., every 10 seconds).
+    DEPRECATED: Periodic task removed in favor of HTTP-triggered execution.
+    
+    This function is no longer used. Jobs are now triggered immediately via HTTP POST
+    to the FastAPI /scrape-venue endpoint when a user submits a venue URL.
+    
+    This change eliminates the need for Celery Beat polling, reducing infrastructure costs.
+    The worker now only runs when jobs are submitted, rather than running 24/7.
+    
+    Kept for backwards compatibility, but should not be called.
     """
-    try:
-        logger.info("Checking for pending venue scraping tasks")
-        
-        # Find pending tasks
-        pending_tasks = find_pending_tasks(limit=5)  # Process up to 5 at a time
-        
-        if not pending_tasks:
-            logger.debug("No pending tasks found")
-            return
-        
-        logger.info(f"Found {len(pending_tasks)} pending tasks")
-        
-        # Process each task
-        for task in pending_tasks:
-            task_id = task['id']
-            # Dispatch the scraping task
-            scrape_venue_task.delay(task_id)
-            logger.info(f"Dispatched scraping task: {task_id}")
-            
-    except Exception as e:
-        logger.error(f"Error processing pending tasks: {str(e)}")
+    logger.warning("process_pending_tasks is deprecated - jobs are now HTTP-triggered")
+    # Function body removed - this should never be called
+    pass
 
