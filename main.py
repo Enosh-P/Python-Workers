@@ -123,7 +123,10 @@ async def scrape_venue(request: ScrapeVenueRequest):
     task_id = request.task_id
     
     try:
+        logger.info(f"Received scrape-venue request for task_id: {task_id}")
+        
         if scrape_venue_task is None:
+            logger.error("scrape_venue_task is None - tasks module not loaded properly")
             raise HTTPException(status_code=503, detail="Scraping service unavailable - tasks module not loaded")
         
         # Validate task exists in database
@@ -137,6 +140,8 @@ async def scrape_venue(request: ScrapeVenueRequest):
         if not task:
             logger.warning(f"Task {task_id} not found in database")
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        
+        logger.info(f"Task {task_id} found in database, status: {task.get('status')}")
         
         # Trigger scraping task
         if ENABLE_CELERY and celery_app:
