@@ -23,7 +23,7 @@ app = FastAPI(title="Venue Scraper Worker", version="2.0.0")
 # Check if Celery is enabled (optional for cost efficiency)
 ENABLE_CELERY = os.getenv('ENABLE_CELERY', 'false').lower() == 'true'
 
-# Import task function (can be called directly or via Celery)
+# Import task function - circular import is broken since worker.py no longer imports tasks
 # Note: scrape_venue_task can be called directly even if it's a Celery task
 try:
     from tasks import scrape_venue_task

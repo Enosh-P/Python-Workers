@@ -34,8 +34,9 @@ celery_app.conf.update(
     # Jobs are triggered immediately when user submits URL via FastAPI endpoint
 )
 
-# Import tasks to register them
-from tasks import scrape_venue_task
+# Tasks are imported when needed to avoid circular imports
+# The @celery_app.task decorator in tasks.py will register them automatically
+# No need to import here since we're not using Celery Beat
 
 if __name__ == '__main__':
     celery_app.start()

@@ -12,6 +12,8 @@ import psycopg2.extras
 logger = logging.getLogger(__name__)
 
 # Import Celery app from worker module
+# Note: This import is safe now that worker.py no longer imports tasks (breaking the circular dependency)
+# The celery_app will always exist in worker.py, even if Celery is disabled
 from worker import celery_app
 
 
