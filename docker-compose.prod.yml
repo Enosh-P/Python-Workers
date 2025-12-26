@@ -1,0 +1,55 @@
+services:
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: always
+
+  worker:
+    build: .
+    env_file:
+      - .env.production
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A worker worker --loglevel=info --concurrency=4
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  beat:
+    build: .
+    env_file:
+      - .env.production
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A worker beat --loglevel=info
+    restart: always
+
+  api:
+    build: .
+    env_file:
+      - .env.production
+    ports:
+      - "8001:8001"
+    command: python main.py
+    restart: always
+
+volumes:
+  redis_data:
+

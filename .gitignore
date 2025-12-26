@@ -1,0 +1,12 @@
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Python Environment
+.env
+.env.local
+.env.production
+.venv/
+venv/
+*.log
