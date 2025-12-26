@@ -152,8 +152,14 @@ Then set Railway start command to use a process manager, or use a startup script
 2. **Start Command:** 
    - Worker: `celery -A worker worker --loglevel=info`
    - Beat: `celery -A worker beat --loglevel=info`
-3. **Health Check Path:** `/health` (if using FastAPI)
-4. **Health Check Port:** `8001` (if using FastAPI)
+3. **Health Check:** 
+   - **Option A (Recommended):** Leave Health Check Path **empty/blank** - Railway will monitor process status
+   - **Option B:** If you need HTTP health checks, use `python start_with_health.py` for Worker service and set:
+     - Health Check Path: `/health`
+     - Health Check Port: `8001`
+   - **Note:** Beat service doesn't need health checks - leave it blank
+
+**Important:** Celery workers don't expose HTTP endpoints by default. Railway's process monitoring is sufficient for health checks.
 
 ### Build Settings
 

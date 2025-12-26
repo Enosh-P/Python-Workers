@@ -6,7 +6,11 @@ __pycache__/
 # Python Environment
 .env
 .env.local
+.env.example
 .env.production
 .venv/
 venv/
 *.log
+
+# Documentation
+*.md
