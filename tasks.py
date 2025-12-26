@@ -87,7 +87,7 @@ def scrape_venue_task(task_id: str):
         
         # Step 4: Create venue_item in database
         logger.info(f"Creating venue item for space {space_id}")
-        venue_item_id = create_venue_item(space_id, venue_data)
+        venue_item_id = create_venue_item(space_id, venue_data, venue_url)
         
         logger.info(f"Successfully completed task {task_id}, created venue item {venue_item_id}")
         

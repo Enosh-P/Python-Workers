@@ -152,7 +152,7 @@ def check_cancel_flag(task_id: str) -> bool:
         return False
 
 
-def create_venue_item(space_id: int, venue_data: Dict) -> str:
+def create_venue_item(space_id: int, venue_data: Dict, venue_url: str = None) -> str:
     """
     Create a venue_item in the venue_items table from extracted venue data.
     
@@ -242,18 +242,19 @@ def create_venue_item(space_id: int, venue_data: Dict) -> str:
         
         images = sorted(images, key=prioritize_jpg)
         
-        # Get rating and spaces_available
+        # Get rating, spaces_available, and phone_number
         rating = venue_data.get('rating')
         spaces_available = venue_data.get('spaces_available', [])
         if not isinstance(spaces_available, list):
             spaces_available = []
+        phone_number = venue_data.get('phone_number')
         
-        # Insert into venue_items (including venue_data JSONB, rating, and spaces_available)
+        # Insert into venue_items (including venue_data JSONB, rating, spaces_available, link, and phone_number)
         cur.execute("""
             INSERT INTO venue_items (
                 id, space_id, name, address, price, available_dates, images, notes, category,
-                is_finalized, is_favorite, venue_data, rating, spaces_available, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                is_finalized, is_favorite, venue_data, rating, spaces_available, link, phone_number, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             RETURNING id
         """, (
             venue_id,
@@ -270,6 +271,8 @@ def create_venue_item(space_id: int, venue_data: Dict) -> str:
             json.dumps(venue_data),  # Store full VENUE_SCHEMA as JSONB
             rating,  # rating column
             spaces_available,  # spaces_available array
+            venue_url,  # link column - original URL used to scrape
+            phone_number,  # phone_number column
         ))
         
         result = cur.fetchone()

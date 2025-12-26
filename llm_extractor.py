@@ -4,6 +4,7 @@ Groq LLM integration for extracting structured venue data from scraped content.
 
 import json
 import logging
+import re
 from typing import Dict, Optional
 from groq import Groq
 import os
@@ -30,7 +31,8 @@ VENUE_SCHEMA = {
     "venue_type": "[String]",
     "spaces_available": ["Indoor", "Outdoor"],
     "rooms_available": "Number",
-    "cover_image_url": "List of String Links"
+    "cover_image_url": "List of String Links",
+    "phone_number": "String"
 }
 
 
@@ -83,6 +85,7 @@ def extract_venue_data(scraped_content: Dict[str, any]) -> Optional[Dict]:
         
         # Validate structure
         validated_data = validate_venue_data(venue_data)
+        # validated_data['cover_image_url'] = scraped_content.get('images', [])
         
         logger.info(f"Successfully extracted venue data: {validated_data.get('name', 'Unknown')}")
         
@@ -108,7 +111,7 @@ def create_extraction_prompt(scraped_content: Dict[str, any]) -> str:
     """
     text = scraped_content.get('text', '')[:10000]  # Limit text length
     metadata = scraped_content.get('metadata', {})
-    images = scraped_content.get('images', [])[:5]  # Limit to first 5 images
+    images = scraped_content.get('images', [])[:10]  # Get more images since we're filtering better
     
     prompt = f"""Extract venue information from the following website content and return it as JSON matching this exact schema:
 
@@ -117,9 +120,9 @@ def create_extraction_prompt(scraped_content: Dict[str, any]) -> str:
 Website Content:
 Title: {metadata.get('title', 'N/A')}
 Description: {metadata.get('description', 'N/A')}
-Text Content: {text[:5000]}
+Text Content: {text[:10000]}
 
-Available Images: {', '.join(images[:5])}
+Available Images (prioritized by relevance - first images are near venue name): {', '.join(images[:10])}
 
 Instructions:
 1. Extract the venue name
@@ -130,12 +133,50 @@ Instructions:
 6. Extract venue type(s) - can be multiple (e.g., ["indoor", "outdoor", "beach", "garden", "farm", "ballroom", "outdoor", "barn", "estate", "resort", "other"])
 7. Extract available spaces (Indoor, Outdoor, or both)
 8. Extract number of rooms if available
-9. Extract jpeg and jpg and venue relevant main image URLs from the images list
+9. Extract venue relevant image URLs from the images list:
+   - Prioritize images that similar to the venue name in the page structure
+10. Extract phone number if available (format: digits only, with optional country code, e.g., "+1234567890" or "1234567890")
 
 Return ONLY valid JSON matching the schema. Use null for missing fields. For arrays, use empty array [] if none found.
 """
     
     return prompt
+
+
+def validate_phone_number(phone: str) -> Optional[str]:
+    """
+    Validate and clean phone number.
+    
+    Args:
+        phone: Raw phone number string
+        
+    Returns:
+        Cleaned phone number string or None if invalid
+    """
+    if not phone:
+        return None
+    
+    # Remove common formatting characters
+    cleaned = re.sub(r'[\s\-\(\)\.]', '', str(phone).strip())
+    
+    # Remove leading + if present (we'll add it back if it's an international number)
+    has_plus = cleaned.startswith('+')
+    if has_plus:
+        cleaned = cleaned[1:]
+    
+    # Check if it's all digits
+    if not cleaned.isdigit():
+        return None
+    
+    # Validate length (minimum 7 digits, maximum 15 digits for international)
+    if len(cleaned) < 7 or len(cleaned) > 15:
+        return None
+    
+    # Return with + prefix if it was there, or if it's 10+ digits (likely international)
+    if has_plus or len(cleaned) >= 10:
+        return f"+{cleaned}"
+    
+    return cleaned
 
 
 def validate_venue_data(data: Dict) -> Dict:
@@ -167,7 +208,8 @@ def validate_venue_data(data: Dict) -> Dict:
         "venue_type": data.get("venue_type", []) if isinstance(data.get("venue_type"), list) else [],
         "spaces_available": data.get("spaces_available", []) if isinstance(data.get("spaces_available"), list) else [],
         "rooms_available": int(data.get("rooms_available", 0)) if data.get("rooms_available") else None,
-        "cover_image_url": data.get("cover_image_url", []) if isinstance(data.get("cover_image_url"), list) else []
+        "cover_image_url": data.get("cover_image_url", []) if isinstance(data.get("cover_image_url"), list) else [],
+        "phone_number": validate_phone_number(data.get("phone_number", "")) if data.get("phone_number") else None
     }
     
     # Prioritize .jpg/.jpeg images in cover_image_url

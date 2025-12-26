@@ -1,0 +1,23 @@
+{
+  "name": "String",
+  "location": {
+    "city": "String",
+    "area": "String",
+    "state": "String"
+  },
+  "rating": "String",
+  "guest_capacity": {
+    "seated": "Number",
+    "floating": "Number"
+  },
+  "price_per_plate_starting": {
+    "veg": "Number",
+    "non_veg": "Number"
+  },
+  "venue_type": "[String]",
+  "spaces_available": ["Indoor", "Outdoor"],
+  "rooms_available": "Number",
+  "cover_image_url": "List of String Links",
+  "phone_number": "String"
+}
+
