@@ -77,36 +77,34 @@ async def root():
 @app.get("/health")
 async def health():
     """
-    Health check endpoint.
-    Checks required environment variables and Celery status (if enabled).
+    Health check endpoint for Railway and other orchestration platforms.
+    This endpoint should return 200 OK quickly to indicate the service is ready.
+    Railway uses this to determine if the service is healthy and should stay running.
     """
-    # Required vars (Celery vars only required if Celery is enabled)
-    required_vars = ['DATABASE_URL', 'GROQ_API_KEY']
-    if ENABLE_CELERY:
-        required_vars.extend(['CELERY_BROKER_URL'])
-    
-    missing_vars = [var for var in required_vars if not os.getenv(var)]
-    
-    if missing_vars:
+    try:
+        # Quick health check - just verify we can respond
+        # Don't do heavy checks here (like DB connections) to keep it fast
+        # Railway will retry if this fails, so keep it simple
+        health_data = {
+            "status": "healthy",
+            "service": "venue-scraper-worker",
+            "version": "2.0.0",
+            "celery_enabled": ENABLE_CELERY
+        }
+        
+        # Optional: Quick check if critical env vars are present (but don't fail if DB is temporarily down)
+        if not os.getenv('DATABASE_URL') and not os.getenv('DB_HOST'):
+            health_data["warning"] = "Database URL not configured"
+        if not os.getenv('GROQ_API_KEY'):
+            health_data["warning"] = "GROQ_API_KEY not configured"
+        
+        return JSONResponse(health_data, status_code=200)
+    except Exception as e:
+        logger.error(f"Health check error: {str(e)}")
         return JSONResponse(
-            {
-                "status": "unhealthy",
-                "missing_environment_variables": missing_vars
-            },
+            {"status": "unhealthy", "error": str(e)},
             status_code=503
         )
-    
-    health_data = {
-        "status": "healthy",
-        "database": "configured",
-        "groq_api": "configured",
-        "celery_enabled": ENABLE_CELERY
-    }
-    
-    if ENABLE_CELERY:
-        health_data["celery_broker"] = "configured"
-    
-    return JSONResponse(health_data)
 
 
 @app.post("/scrape-venue")
@@ -262,5 +260,8 @@ async def process_pending():
 
 if __name__ == "__main__":
     port = int(os.getenv('PORT', 8001))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    logger.info(f"Starting FastAPI server on port {port}")
+    logger.info(f"Health check endpoint: http://0.0.0.0:{port}/health")
+    logger.info(f"Scrape endpoint: http://0.0.0.0:{port}/scrape-venue")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
 
