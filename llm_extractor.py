@@ -85,7 +85,9 @@ def extract_venue_data(scraped_content: Dict[str, any]) -> Optional[Dict]:
         
         # Validate structure
         validated_data = validate_venue_data(venue_data)
-        # validated_data['cover_image_url'] = scraped_content.get('images', [])
+        validated_data['cover_image_url'] = scraped_content.get('images', [])
+        if len(validated_data["cover_image_url"]) > 3:
+            validated_data["cover_image_url"] = validated_data["cover_image_url"][:3]
         
         logger.info(f"Successfully extracted venue data: {validated_data.get('name', 'Unknown')}")
         
@@ -121,8 +123,6 @@ Website Content:
 Title: {metadata.get('title', 'N/A')}
 Description: {metadata.get('description', 'N/A')}
 Text Content: {text[:10000]}
-
-Available Images (prioritized by relevance - first images are near venue name): {', '.join(images[:10])}
 
 Instructions:
 1. Extract the venue name
