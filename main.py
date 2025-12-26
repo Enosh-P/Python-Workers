@@ -14,8 +14,16 @@ from pydantic import BaseModel
 import os
 import uvicorn
 import logging
+import sys
 
-# Configure logging
+# Configure logging to output to stdout/stderr (visible in Docker logs)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Venue Scraper Worker", version="2.0.0")
@@ -156,10 +164,20 @@ async def scrape_venue(request: ScrapeVenueRequest):
             # This avoids blocking the HTTP response while processing
             # Call the implementation function directly (not the Celery wrapper)
             import threading
-            thread = threading.Thread(target=_scrape_venue_task_impl, args=(task_id,))
+            
+            def run_task_with_logging(task_id: str):
+                """Wrapper to ensure exceptions are logged"""
+                try:
+                    logger.info(f"Background thread starting task {task_id}")
+                    _scrape_venue_task_impl(task_id)
+                    logger.info(f"Background thread completed task {task_id}")
+                except Exception as e:
+                    logger.error(f"Background thread error for task {task_id}: {str(e)}", exc_info=True)
+            
+            thread = threading.Thread(target=run_task_with_logging, args=(task_id,))
             thread.daemon = True
             thread.start()
-            logger.info(f"Started scraping task {task_id} directly (Celery disabled)")
+            logger.info(f"Started scraping task {task_id} directly (Celery disabled) in background thread")
             message = "Task started directly"
         
         return JSONResponse({
@@ -173,6 +191,73 @@ async def scrape_venue(request: ScrapeVenueRequest):
     except Exception as e:
         logger.error(f"Error triggering scraping task {task_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to trigger task: {str(e)}")
+
+
+@app.post("/process-pending")
+async def process_pending():
+    """
+    Fallback endpoint to process any pending tasks that weren't triggered automatically.
+    
+    This can be called periodically (e.g., every 2-5 seconds) as a safety net
+    in case the HTTP trigger from Next.js fails or is delayed.
+    
+    Only processes tasks that are still 'pending' and older than 2 seconds
+    to avoid processing tasks that are currently being triggered.
+    """
+    try:
+        from db import find_pending_tasks
+        import threading
+        from datetime import datetime, timedelta
+        
+        # Find pending tasks older than 2 seconds (to avoid race conditions)
+        cutoff_time = datetime.now() - timedelta(seconds=2)
+        
+        # Get pending tasks
+        pending_tasks = find_pending_tasks(limit=10)
+        
+        processed = 0
+        for task in pending_tasks:
+            task_id = task['id']
+            # Only process tasks older than 2 seconds
+            created_at = task.get('created_at')
+            if created_at and isinstance(created_at, str):
+                try:
+                    task_time = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    if task_time.tzinfo:
+                        task_time = task_time.replace(tzinfo=None)
+                except:
+                    # If we can't parse the time, process it anyway (fallback)
+                    task_time = cutoff_time - timedelta(seconds=1)
+            else:
+                # If no timestamp, process it
+                task_time = cutoff_time - timedelta(seconds=1)
+            
+            if task_time < cutoff_time:
+                logger.info(f"Processing stale pending task {task_id} (fallback trigger)")
+                
+                def run_task_with_logging(task_id: str):
+                    """Wrapper to ensure exceptions are logged"""
+                    try:
+                        logger.info(f"Background thread starting task {task_id} (fallback)")
+                        _scrape_venue_task_impl(task_id)
+                        logger.info(f"Background thread completed task {task_id} (fallback)")
+                    except Exception as e:
+                        logger.error(f"Background thread error for task {task_id}: {str(e)}", exc_info=True)
+                
+                thread = threading.Thread(target=run_task_with_logging, args=(task_id,))
+                thread.daemon = True
+                thread.start()
+                processed += 1
+        
+        return JSONResponse({
+            "success": True,
+            "pending_tasks_found": len(pending_tasks),
+            "tasks_processed": processed
+        })
+        
+    except Exception as e:
+        logger.error(f"Error processing pending tasks: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to process pending tasks: {str(e)}")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,25 @@
 services:
+  # FastAPI service - handles HTTP-triggered venue scraping
+  # With ENABLE_CELERY=false (default), tasks run directly in background threads
+  # No Celery worker or Beat scheduler needed - reduces costs
+  api:
+    build: .
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    ports:
+      - "8001:8001"
+    environment:
+      - ENABLE_CELERY=${ENABLE_CELERY:-false}
+      # Optional: Only needed if ENABLE_CELERY=true
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+    command: python main.py
+    restart: unless-stopped
+
+  # Redis is only needed if ENABLE_CELERY=true
+  # Comment out if not using Celery to save resources
   redis:
     image: redis:7-alpine
     ports:
@@ -11,47 +32,38 @@ services:
       timeout: 3s
       retries: 5
 
-  worker:
-    build: .
-    volumes:
-      - .:/app
-    env_file:
-      - .env
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-    depends_on:
-      redis:
-        condition: service_healthy
-    command: celery -A worker worker --loglevel=info
-    restart: unless-stopped
+  # Celery worker - only needed if ENABLE_CELERY=true
+  # Comment out if not using Celery (default)
+  # worker:
+  #   build: .
+  #   volumes:
+  #     - .:/app
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     - CELERY_RESULT_BACKEND=redis://redis:6379/0
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #   command: celery -A worker worker --loglevel=info
+  #   restart: unless-stopped
 
-  beat:
-    build: .
-    volumes:
-      - .:/app
-    env_file:
-      - .env
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-    depends_on:
-      redis:
-        condition: service_healthy
-    command: celery -A worker beat --loglevel=info
-    restart: unless-stopped
-
-  # Optional: FastAPI health check
-  api:
-    build: .
-    volumes:
-      - .:/app
-    env_file:
-      - .env
-    ports:
-      - "8001:8001"
-    command: python main.py
-    restart: unless-stopped
+  # Celery Beat - NO LONGER NEEDED (removed in favor of HTTP-triggered execution)
+  # beat:
+  #   build: .
+  #   volumes:
+  #     - .:/app
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     - CELERY_RESULT_BACKEND=redis://redis:6379/0
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #   command: celery -A worker beat --loglevel=info
+  #   restart: unless-stopped
 
 volumes:
   redis_data:
