@@ -172,7 +172,58 @@ def _scrape_photographer_task_impl(task_id: str):
 
 
 def _scrape_gift_task_impl(task_id: str):
-    _scrape_typed_task_impl(task_id, 'gift', 'gift_url', extract_gift_data)
+    """Gift scraping with fallback: if scrape+extract fails, pass URL directly to LLM."""
+    from llm_extractor import _extract_gift_from_url
+    try:
+        logger.info(f"Starting gift scraping task: {task_id}")
+        if check_cancel_flag_generic(task_id, 'gift'):
+            update_task(task_id, 'gift', 'canceled')
+            return
+        update_task(task_id, 'gift', 'processing')
+        task = find_task(task_id, 'gift')
+        if not task:
+            update_task(task_id, 'gift', 'failed', error_message="Task not found in database")
+            return
+        url = task.get('gift_url')
+        if not url:
+            update_task(task_id, 'gift', 'failed', error_message="Missing gift_url in task")
+            return
+        if check_cancel_flag_generic(task_id, 'gift'):
+            update_task(task_id, 'gift', 'canceled')
+            return
+
+        data = None
+
+        # Step 1: Try normal scrape → LLM extraction
+        try:
+            scraped_content = scrape_venue_page(url)
+            data = extract_gift_data(scraped_content)
+        except Exception as e:
+            logger.warning(f"Scrape+extract failed for gift URL {url}: {e}")
+
+        # Step 2: If that didn't work, ask LLM with just the URL
+        if not data:
+            logger.info(f"Normal extraction failed for {url}, trying URL-only LLM fallback")
+            try:
+                data = _extract_gift_from_url(url)
+                if data:
+                    data['product_url'] = data.get('product_url') or url
+            except Exception as e:
+                logger.error(f"URL-only LLM fallback also failed for {url}: {e}")
+
+        if check_cancel_flag_generic(task_id, 'gift'):
+            update_task(task_id, 'gift', 'canceled')
+            return
+
+        if not data:
+            update_task(task_id, 'gift', 'failed', error_message="Failed to extract gift data from URL")
+            return
+
+        update_task(task_id, 'gift', 'ready', data=data)
+        logger.info(f"Successfully completed gift task {task_id}")
+    except Exception as e:
+        logger.error(f"Error processing gift task {task_id}: {str(e)}")
+        update_task(task_id, 'gift', 'failed', error_message=str(e))
 
 
 @celery_app.task(name='process_pending_tasks')

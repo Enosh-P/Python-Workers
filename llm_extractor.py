@@ -361,11 +361,66 @@ def extract_gift_data(scraped_content: Dict[str, any]) -> Optional[Dict]:
 4. For product pages (e.g. Amazon, Etsy, etc.), focus on product name, price, and image."""
     data = _extract_with_llm(scraped_content, GIFT_SCHEMA, "gift/product", instructions)
     if not data or not data.get('product_name'):
-        return None
+        # Fallback: scrape may have failed (e.g. Amazon blocks bots). Ask LLM using URL only.
+        url = scraped_content.get('url', '')
+        if url:
+            logger.info(f"Scrape yielded no useful gift data, falling back to URL-only LLM extraction: {url}")
+            data = _extract_gift_from_url(url)
+        if not data or not data.get('product_name'):
+            return None
     images = scraped_content.get('images', [])
     if images and not data.get('image_url'):
         data['image_url'] = images[0]
     data['product_url'] = data.get('product_url') or scraped_content.get('url', '')
-    data['images'] = images[:5]  # keep for compatibility
+    data['images'] = images[:5]
     return data
+
+
+def _extract_gift_from_url(url: str) -> Optional[Dict]:
+    """Fallback: ask the LLM to identify a product from its URL alone (e.g. Amazon ASIN in URL)."""
+    try:
+        api_key = os.getenv('GROQ_API_KEY')
+        if not api_key:
+            raise ValueError("GROQ_API_KEY environment variable not set")
+        client = Groq(api_key=api_key)
+        schema_json = json.dumps(GIFT_SCHEMA, indent=2)
+        prompt = f"""I have a product page URL but could not scrape its content. Based on the URL alone, extract as much product information as you can and return JSON matching this schema:
+
+{schema_json}
+
+Product URL: {url}
+
+Instructions:
+1. Many product URLs contain the product name (e.g. Amazon URLs have the product title in the path).
+2. Extract the product name from the URL slug/path.
+3. Set price to null if you cannot determine it.
+4. Set image_url to null.
+5. Set product_url to the provided URL.
+6. If the URL is from a known retailer (Amazon, Etsy, Target, Walmart, etc.), note the retailer in the notes field.
+
+Return ONLY valid JSON. Use null for fields you cannot determine."""
+
+        response = client.chat.completions.create(
+            model="openai/gpt-oss-20b",
+            messages=[
+                {"role": "system", "content": "You are an expert at identifying products from URLs. Extract what you can from URL patterns, slugs, and path segments. Always return valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_completion_tokens=2048,
+            top_p=1,
+            reasoning_effort="medium",
+            stream=False,
+            response_format={"type": "json_object"}
+        )
+        content = response.choices[0].message.content
+        data = json.loads(content)
+        if data and data.get('product_name'):
+            data['product_url'] = url
+            logger.info(f"URL-only extraction succeeded: {data.get('product_name')}")
+            return data
+        return None
+    except Exception as e:
+        logger.error(f"URL-only gift extraction failed: {str(e)}")
+        return None
 
