@@ -16,6 +16,12 @@ import uvicorn
 import logging
 import sys
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # Configure logging to output to stdout/stderr (visible in Docker logs)
 logging.basicConfig(
     level=logging.INFO,
