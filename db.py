@@ -152,6 +152,80 @@ def check_cancel_flag(task_id: str) -> bool:
         return False
 
 
+# Task type config: (table, url_column, data_column)
+TASK_CONFIG = {
+    'food': ('food_scraping_tasks', 'food_url', 'food_data'),
+    'music': ('music_scraping_tasks', 'music_url', 'music_data'),
+    'photographer': ('photographer_scraping_tasks', 'photographer_url', 'photographer_data'),
+    'gift': ('gift_scraping_tasks', 'gift_url', 'gift_data'),
+}
+
+
+def find_task(task_id: str, task_type: str) -> Optional[Dict]:
+    """Find a scraping task by ID and type. Returns dict with url and space_id."""
+    if task_type not in TASK_CONFIG:
+        return None
+    table, url_col, _ = TASK_CONFIG[task_type]
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(f"SELECT * FROM {table} WHERE id = %s", (task_id,))
+        task = cur.fetchone()
+        cur.close()
+        conn.close()
+        return dict(task) if task else None
+    except Exception as e:
+        logger.error(f"Error finding {task_type} task {task_id}: {str(e)}")
+        raise
+
+
+def update_task(task_id: str, task_type: str, status: str, data: Optional[Dict] = None, error_message: Optional[str] = None):
+    """Update a scraping task's status and data."""
+    if task_type not in TASK_CONFIG:
+        raise ValueError(f"Unknown task type: {task_type}")
+    table, _, data_col = TASK_CONFIG[task_type]
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        updates = ["status = %s", "updated_at = CURRENT_TIMESTAMP"]
+        values = [status]
+        if data is not None:
+            updates.append(f"{data_col} = %s")
+            values.append(json.dumps(data))
+        if error_message is not None:
+            updates.append("error_message = %s")
+            values.append(error_message)
+        if status in ('ready', 'failed'):
+            updates.append("processed_at = CURRENT_TIMESTAMP")
+        values.append(task_id)
+        cur.execute(f"UPDATE {table} SET {', '.join(updates)} WHERE id = %s", values)
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info(f"Updated {task_type} task {task_id} to status: {status}")
+    except Exception as e:
+        logger.error(f"Error updating {task_type} task: {str(e)}")
+        raise
+
+
+def check_cancel_flag_generic(task_id: str, task_type: str) -> bool:
+    """Check if a task has been canceled."""
+    if task_type not in TASK_CONFIG:
+        return False
+    table, _, _ = TASK_CONFIG[task_type]
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(f"SELECT cancel_flag FROM {table} WHERE id = %s", (task_id,))
+        result = cur.fetchone()
+        cur.close()
+        conn.close()
+        return result[0] if result else False
+    except Exception as e:
+        logger.error(f"Error checking cancel flag: {str(e)}")
+        return False
+
+
 def create_venue_item(space_id: int, venue_data: Dict, venue_url: str = None) -> str:
     """
     Create a venue_item in the venue_items table from extracted venue data.

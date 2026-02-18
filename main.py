@@ -34,12 +34,20 @@ ENABLE_CELERY = os.getenv('ENABLE_CELERY', 'false').lower() == 'true'
 # Import task functions - circular import is broken since worker.py no longer imports tasks
 # Import both the Celery-wrapped version and the direct implementation
 try:
-    from tasks import scrape_venue_task, _scrape_venue_task_impl
+    from tasks import (
+        scrape_venue_task, _scrape_venue_task_impl,
+        _scrape_food_task_impl, _scrape_music_task_impl,
+        _scrape_photographer_task_impl, _scrape_gift_task_impl
+    )
 except Exception as e:
     # If import fails (e.g., Celery/Redis not available), we can't process tasks
     logger.error(f"Failed to import tasks module: {e}")
     scrape_venue_task = None
     _scrape_venue_task_impl = None
+    _scrape_food_task_impl = None
+    _scrape_music_task_impl = None
+    _scrape_photographer_task_impl = None
+    _scrape_gift_task_impl = None
     ENABLE_CELERY = False
 
 # Import Celery app only if enabled (for .delay() method)
@@ -55,11 +63,16 @@ if ENABLE_CELERY:
         ENABLE_CELERY = False
 
 # Import DB functions for validation
-from db import get_db_connection
+from db import get_db_connection, find_task, TASK_CONFIG
 import psycopg2.extras
 
 
 class ScrapeVenueRequest(BaseModel):
+    task_id: str
+
+
+class ScrapeTaskRequest(BaseModel):
+    """Generic request for scrape endpoints - accepts task_id."""
     task_id: str
 
 
@@ -189,6 +202,57 @@ async def scrape_venue(request: ScrapeVenueRequest):
     except Exception as e:
         logger.error(f"Error triggering scraping task {task_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to trigger task: {str(e)}")
+
+
+def _trigger_typed_scrape(task_id: str, task_type: str, impl_fn, url_key: str):
+    """Validate task exists and trigger scrape in background thread."""
+    task = find_task(task_id, task_type)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    if not task.get(url_key):
+        raise HTTPException(status_code=400, detail=f"Task missing {url_key}")
+    import threading
+    def run():
+        try:
+            impl_fn(task_id)
+        except Exception as e:
+            logger.error(f"Background thread error for {task_type} task {task_id}: {str(e)}", exc_info=True)
+    thread = threading.Thread(target=run, args=())
+    thread.daemon = True
+    thread.start()
+    return JSONResponse({"success": True, "message": "Task started", "task_id": task_id})
+
+
+@app.post("/scrape-food")
+async def scrape_food(request: ScrapeTaskRequest):
+    """Trigger food/caterer scraping. Accepts { task_id }, loads task, scrapes URL, updates food_data and status='ready'."""
+    if _scrape_food_task_impl is None:
+        raise HTTPException(status_code=503, detail="Scraping service unavailable")
+    return _trigger_typed_scrape(request.task_id, 'food', _scrape_food_task_impl, 'food_url')
+
+
+@app.post("/scrape-music")
+async def scrape_music(request: ScrapeTaskRequest):
+    """Trigger music/entertainment scraping. Accepts { task_id }, loads task, scrapes URL, updates music_data and status='ready'."""
+    if _scrape_music_task_impl is None:
+        raise HTTPException(status_code=503, detail="Scraping service unavailable")
+    return _trigger_typed_scrape(request.task_id, 'music', _scrape_music_task_impl, 'music_url')
+
+
+@app.post("/scrape-photographer")
+async def scrape_photographer(request: ScrapeTaskRequest):
+    """Trigger photographer scraping. Accepts { task_id }, loads task, scrapes URL, updates photographer_data and status='ready'."""
+    if _scrape_photographer_task_impl is None:
+        raise HTTPException(status_code=503, detail="Scraping service unavailable")
+    return _trigger_typed_scrape(request.task_id, 'photographer', _scrape_photographer_task_impl, 'photographer_url')
+
+
+@app.post("/scrape-gift")
+async def scrape_gift(request: ScrapeTaskRequest):
+    """Trigger gift/product scraping. Accepts { task_id }, loads task, scrapes URL, updates gift_data and status='ready'."""
+    if _scrape_gift_task_impl is None:
+        raise HTTPException(status_code=503, detail="Scraping service unavailable")
+    return _trigger_typed_scrape(request.task_id, 'gift', _scrape_gift_task_impl, 'gift_url')
 
 
 @app.post("/process-pending")

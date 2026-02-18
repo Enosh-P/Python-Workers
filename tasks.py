@@ -1,12 +1,15 @@
 """
-Celery tasks for venue scraping.
+Celery tasks for venue scraping and food/music/photographer/gift scraping.
 """
 
 import logging
 import time
 from scraper import scrape_venue_page
-from llm_extractor import extract_venue_data
-from db import find_pending_tasks, update_task_status, check_cancel_flag, create_venue_item, get_db_connection
+from llm_extractor import extract_venue_data, extract_food_data, extract_music_data, extract_photographer_data, extract_gift_data
+from db import (
+    find_pending_tasks, update_task_status, check_cancel_flag, create_venue_item, get_db_connection,
+    find_task, update_task, check_cancel_flag_generic, TASK_CONFIG
+)
 import psycopg2.extras
 
 logger = logging.getLogger(__name__)
@@ -109,6 +112,67 @@ def scrape_venue_task(task_id: str):
     When Celery is disabled, call _scrape_venue_task_impl() directly instead.
     """
     return _scrape_venue_task_impl(task_id)
+
+
+def _scrape_typed_task_impl(task_id: str, task_type: str, url_key: str, extractor_fn):
+    """
+    Generic implementation for food/music/photographer/gift scraping.
+    Loads task, scrapes URL, extracts data, updates task with *_data and status='ready'.
+    """
+    try:
+        logger.info(f"Starting {task_type} scraping task: {task_id}")
+        if check_cancel_flag_generic(task_id, task_type):
+            logger.info(f"Task {task_id} was canceled before processing")
+            update_task(task_id, task_type, 'canceled')
+            return
+        update_task(task_id, task_type, 'processing')
+        task = find_task(task_id, task_type)
+        if not task:
+            logger.error(f"Task {task_id} not found")
+            update_task(task_id, task_type, 'failed', error_message="Task not found in database")
+            return
+        url = task.get(url_key)
+        if not url:
+            update_task(task_id, task_type, 'failed', error_message=f"Missing {url_key} in task")
+            return
+        if check_cancel_flag_generic(task_id, task_type):
+            update_task(task_id, task_type, 'canceled')
+            return
+        logger.info(f"Scraping URL: {url}")
+        scraped_content = scrape_venue_page(url)
+        if check_cancel_flag_generic(task_id, task_type):
+            update_task(task_id, task_type, 'canceled')
+            return
+        logger.info(f"Extracting {task_type} data for task {task_id}")
+        data = extractor_fn(scraped_content)
+        if not data:
+            logger.error(f"Failed to extract {task_type} data for task {task_id}")
+            update_task(task_id, task_type, 'failed', error_message=f"Failed to extract {task_type} data from webpage")
+            return
+        if check_cancel_flag_generic(task_id, task_type):
+            update_task(task_id, task_type, 'canceled')
+            return
+        update_task(task_id, task_type, 'ready', data=data)
+        logger.info(f"Successfully completed {task_type} task {task_id}")
+    except Exception as e:
+        logger.error(f"Error processing {task_type} task {task_id}: {str(e)}")
+        update_task(task_id, task_type, 'failed', error_message=str(e))
+
+
+def _scrape_food_task_impl(task_id: str):
+    _scrape_typed_task_impl(task_id, 'food', 'food_url', extract_food_data)
+
+
+def _scrape_music_task_impl(task_id: str):
+    _scrape_typed_task_impl(task_id, 'music', 'music_url', extract_music_data)
+
+
+def _scrape_photographer_task_impl(task_id: str):
+    _scrape_typed_task_impl(task_id, 'photographer', 'photographer_url', extract_photographer_data)
+
+
+def _scrape_gift_task_impl(task_id: str):
+    _scrape_typed_task_impl(task_id, 'gift', 'gift_url', extract_gift_data)
 
 
 @celery_app.task(name='process_pending_tasks')

@@ -234,3 +234,138 @@ def validate_venue_data(data: Dict) -> Dict:
 # VENUE_SCHEMA as JSON string for prompt
 VENUE_SCHEMA_JSON = json.dumps(VENUE_SCHEMA, indent=2)
 
+# Schemas for other section types
+FOOD_SCHEMA = {
+    "name": "String - caterer/vendor name",
+    "menu_items": "[String] - list of menu items or dishes",
+    "price_min": "Number - minimum price per person",
+    "price_max": "Number - maximum price per person",
+    "notes": "String - any additional notes",
+    "images": "[String] - list of image URLs"
+}
+
+MUSIC_SCHEMA = {
+    "name": "String - band/DJ/entertainer name",
+    "type": "String - one of: band, dj, playlist, dance, performer, mc, lighting, sound_system, other",
+    "songs": "[String] - list of songs or sample tracks",
+    "price": "Number - price",
+    "images": "[String] - list of image URLs"
+}
+
+PHOTOGRAPHER_SCHEMA = {
+    "name": "String - photographer name",
+    "price": "Number - price",
+    "images": "[String] - list of image URLs",
+    "notes": "String - any additional notes"
+}
+
+GIFT_SCHEMA = {
+    "product_name": "String - product name",
+    "price": "Number - product price",
+    "image_url": "String - main product image URL",
+    "product_url": "String - product page URL",
+    "notes": "String - optional notes"
+}
+
+
+def _extract_with_llm(scraped_content: Dict, schema: Dict, schema_name: str, instructions: str) -> Optional[Dict]:
+    """Generic LLM extraction with schema and prompt."""
+    try:
+        api_key = os.getenv('GROQ_API_KEY')
+        if not api_key:
+            raise ValueError("GROQ_API_KEY environment variable not set")
+        client = Groq(api_key=api_key)
+        text = scraped_content.get('text', '')[:10000]
+        metadata = scraped_content.get('metadata', {})
+        images = scraped_content.get('images', [])[:10]
+        schema_json = json.dumps(schema, indent=2)
+        prompt = f"""Extract {schema_name} information from the following website content and return it as JSON matching this exact schema:
+
+{schema_json}
+
+Website Content:
+Title: {metadata.get('title', 'N/A')}
+Description: {metadata.get('description', 'N/A')}
+Text Content: {text[:10000]}
+
+{instructions}
+
+Return ONLY valid JSON matching the schema. Use null for missing fields. For arrays, use empty array [] if none found.
+"""
+        response = client.chat.completions.create(
+            model="openai/gpt-oss-20b",
+            messages=[
+                {"role": "system", "content": f"You are an expert at extracting structured data from websites. Always return valid JSON matching the exact schema provided."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.5,
+            max_completion_tokens=4096,
+            top_p=1,
+            reasoning_effort="medium",
+            stream=False,
+            response_format={"type": "json_object"}
+        )
+        content = response.choices[0].message.content
+        return json.loads(content)
+    except (json.JSONDecodeError, Exception) as e:
+        logger.error(f"Error extracting {schema_name} data: {str(e)}")
+        return None
+
+
+def extract_food_data(scraped_content: Dict[str, any]) -> Optional[Dict]:
+    """Extract structured food/caterer data from scraped content."""
+    instructions = """1. Extract the caterer or food vendor name.
+2. Extract menu items or dishes.
+3. Extract price range (min/max per person) if available.
+4. Extract any notes."""
+    data = _extract_with_llm(scraped_content, FOOD_SCHEMA, "food/caterer", instructions)
+    if not data or not data.get('name'):
+        return None
+    data['images'] = scraped_content.get('images', [])[:5]
+    data['link'] = scraped_content.get('url', '')
+    return data
+
+
+def extract_music_data(scraped_content: Dict[str, any]) -> Optional[Dict]:
+    """Extract structured music/entertainment data from scraped content."""
+    instructions = """1. Extract the band, DJ, or entertainer name.
+2. Set type to one of: band, dj, playlist, dance, performer, mc, lighting, sound_system, other.
+3. Extract sample songs or tracks if available.
+4. Extract price if available."""
+    data = _extract_with_llm(scraped_content, MUSIC_SCHEMA, "music/entertainment", instructions)
+    if not data or not data.get('name'):
+        return None
+    data['images'] = scraped_content.get('images', [])[:5]
+    data['link'] = scraped_content.get('url', '')
+    return data
+
+
+def extract_photographer_data(scraped_content: Dict[str, any]) -> Optional[Dict]:
+    """Extract structured photographer data from scraped content."""
+    instructions = """1. Extract the photographer name or studio name.
+2. Extract price if available.
+3. Extract any notes."""
+    data = _extract_with_llm(scraped_content, PHOTOGRAPHER_SCHEMA, "photographer", instructions)
+    if not data or not data.get('name'):
+        return None
+    data['images'] = scraped_content.get('images', [])[:5]
+    data['link'] = scraped_content.get('url', '')
+    return data
+
+
+def extract_gift_data(scraped_content: Dict[str, any]) -> Optional[Dict]:
+    """Extract structured gift/product data from scraped content (product pages)."""
+    instructions = """1. Extract the product name.
+2. Extract the product price if available.
+3. Extract the main product image URL from the images list.
+4. For product pages (e.g. Amazon, Etsy, etc.), focus on product name, price, and image."""
+    data = _extract_with_llm(scraped_content, GIFT_SCHEMA, "gift/product", instructions)
+    if not data or not data.get('product_name'):
+        return None
+    images = scraped_content.get('images', [])
+    if images and not data.get('image_url'):
+        data['image_url'] = images[0]
+    data['product_url'] = data.get('product_url') or scraped_content.get('url', '')
+    data['images'] = images[:5]  # keep for compatibility
+    return data
+
