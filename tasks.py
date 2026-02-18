@@ -172,8 +172,9 @@ def _scrape_photographer_task_impl(task_id: str):
 
 
 def _scrape_gift_task_impl(task_id: str):
-    """Gift scraping with fallback: if scrape+extract fails, pass URL directly to LLM."""
+    """Gift scraping: runs scrape+extract and URL-only LLM in parallel, uses whichever succeeds (prefers scrape)."""
     from llm_extractor import _extract_gift_from_url
+    import concurrent.futures
     try:
         logger.info(f"Starting gift scraping task: {task_id}")
         if check_cancel_flag_generic(task_id, 'gift'):
@@ -192,24 +193,47 @@ def _scrape_gift_task_impl(task_id: str):
             update_task(task_id, 'gift', 'canceled')
             return
 
-        data = None
-
-        # Step 1: Try normal scrape → LLM extraction
-        try:
-            scraped_content = scrape_venue_page(url)
-            data = extract_gift_data(scraped_content)
-        except Exception as e:
-            logger.warning(f"Scrape+extract failed for gift URL {url}: {e}")
-
-        # Step 2: If that didn't work, ask LLM with just the URL
-        if not data:
-            logger.info(f"Normal extraction failed for {url}, trying URL-only LLM fallback")
+        def scrape_path():
+            """Path A: scrape page then extract with LLM."""
             try:
-                data = _extract_gift_from_url(url)
-                if data:
-                    data['product_url'] = data.get('product_url') or url
+                scraped = scrape_venue_page(url)
+                result = extract_gift_data(scraped)
+                if result:
+                    logger.info(f"Scrape path succeeded for {url}")
+                return result
             except Exception as e:
-                logger.error(f"URL-only LLM fallback also failed for {url}: {e}")
+                logger.warning(f"Scrape path failed for {url}: {e}")
+                return None
+
+        def url_only_path():
+            """Path B: send URL directly to LLM."""
+            try:
+                result = _extract_gift_from_url(url)
+                if result:
+                    result['product_url'] = result.get('product_url') or url
+                    logger.info(f"URL-only path succeeded for {url}")
+                return result
+            except Exception as e:
+                logger.warning(f"URL-only path failed for {url}: {e}")
+                return None
+
+        # Run both in parallel
+        scrape_result = None
+        url_result = None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            scrape_future = executor.submit(scrape_path)
+            url_future = executor.submit(url_only_path)
+            try:
+                scrape_result = scrape_future.result(timeout=60)
+            except Exception as e:
+                logger.warning(f"Scrape future error: {e}")
+            try:
+                url_result = url_future.result(timeout=60)
+            except Exception as e:
+                logger.warning(f"URL-only future error: {e}")
+
+        # Prefer scrape result (richer data with images), fall back to URL-only
+        data = scrape_result or url_result
 
         if check_cancel_flag_generic(task_id, 'gift'):
             update_task(task_id, 'gift', 'canceled')
