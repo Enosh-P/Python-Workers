@@ -254,9 +254,15 @@ MUSIC_SCHEMA = {
 
 PHOTOGRAPHER_SCHEMA = {
     "name": "String - photographer name",
-    "price": "Number - price",
+    "price": "Number - main price (or price with lens if applicable)",
     "images": "[String] - list of image URLs",
-    "notes": "String - any additional notes"
+    "notes": "String - any additional notes",
+    "camera_rent_link": "String - URL where to rent the camera from",
+    "camera_details": "String - camera model, specs, or description",
+    "place": "String - location or place name",
+    "price_without_lens": "Number - price without lens",
+    "price_with_lens": "Number - price with lens",
+    "lenses_link": "String - URL for lenses (rental or purchase)"
 }
 
 GIFT_SCHEMA = {
@@ -343,8 +349,13 @@ def extract_music_data(scraped_content: Dict[str, any]) -> Optional[Dict]:
 def extract_photographer_data(scraped_content: Dict[str, any]) -> Optional[Dict]:
     """Extract structured photographer data from scraped content."""
     instructions = """1. Extract the photographer name or studio name.
-2. Extract price if available.
-3. Extract any notes."""
+2. Extract price if available (main price; use price_with_lens if packages include lens).
+3. Extract any notes.
+4. Extract camera_rent_link if the page mentions where to rent the camera (URL).
+5. Extract camera_details (model, specs, description) if mentioned.
+6. Extract place (location, city, studio address) if available.
+7. Extract price_without_lens and price_with_lens if both are listed.
+8. Extract lenses_link (URL for lenses) if mentioned."""
     data = _extract_with_llm(scraped_content, PHOTOGRAPHER_SCHEMA, "photographer", instructions)
     if not data or not data.get('name'):
         return None
